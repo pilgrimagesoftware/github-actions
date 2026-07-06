@@ -129,9 +129,11 @@ jobs:
         id: semantic_release
         uses: cycjimmy/semantic-release-action@v6
         with:
-          semantic_version: ${{ steps.get_latest_tag.outputs.tag }}
-          branch: ${{ github.ref_name }}
+          branches: |
+            ["${{ github.ref_name }}"]
           dry_run: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Other interesting things
         run: |

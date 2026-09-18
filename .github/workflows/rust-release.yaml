@@ -11,6 +11,13 @@ on:
         description: "Arguments for the pre-publish `cargo test` invocation."
         type: string
         default: "--all-features"
+      publish-to-crates-io:
+        description: >
+          Publish the crate to crates.io. Set false for an application repo that has no
+          crates.io presence of its own (e.g. a packaged desktop app), or for any workspace
+          whose root is a virtual manifest, where `cargo publish` cannot run.
+        type: boolean
+        default: true
       trusted-publishing:
         description: >
           Use crates.io OIDC trusted publishing (rust-lang/crates-io-auth-action) instead of
@@ -22,9 +29,23 @@ on:
         description: "Branch to merge the release ref back into after publishing (e.g. develop). Empty to skip."
         type: string
         default: "develop"
+      release-branch:
+        description: "Branch the release was cut from; the head of the merge-back."
+        type: string
+        default: "master"
     secrets:
       CRATES_API_KEY:
         description: "crates.io API token. Required only when trusted-publishing is false."
+        required: false
+      PSW_CI_APP_ID:
+        description: >
+          GitHub App used for the merge-back. Required when the merge-back branch is
+          protected: the default GITHUB_TOKEN cannot push to a branch that requires a pull
+          request, and a locally created merge commit carries no signature where signed
+          commits are required.
+        required: false
+      PSW_CI_PRIVATE_KEY:
+        description: "Private key for the PSW_CI_APP_ID app."
         required: false
 
 permissions:
@@ -74,18 +95,18 @@ jobs:
 
       - name: Authenticate with crates.io (trusted publishing)
         id: crates_io_auth
-        if: inputs.trusted-publishing
+        if: inputs.publish-to-crates-io && inputs.trusted-publishing
         uses: rust-lang/crates-io-auth-action@v1
 
       - name: Publish to crates.io (trusted publishing)
-        if: inputs.trusted-publishing
+        if: inputs.publish-to-crates-io && inputs.trusted-publishing
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
         run: |
           cargo publish
 
       - name: Publish to crates.io (token)
-        if: ${{ !inputs.trusted-publishing }}
+        if: ${{ inputs.publish-to-crates-io && !inputs.trusted-publishing }}
         run: |
           cargo publish --token ${{ secrets.CRATES_API_KEY }}
 
@@ -101,14 +122,57 @@ jobs:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
           body_path: RELEASE_NOTES.md
 
+      # A step cannot read its own `env:` block from its `if:`, and the `secrets`
+      # context is rejected in `if:` outright, so the app's presence is resolved in a
+      # `run:` step and exposed as an output for the steps below to branch on.
+      - name: Check for CI app credentials
+        id: ci_app
+        if: inputs.merge-back-branch != ''
+        env:
+          PSW_CI_APP_ID: ${{ secrets.PSW_CI_APP_ID }}
+        run: |
+          if [ -n "$PSW_CI_APP_ID" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate token
+        id: ci_token
+        if: steps.ci_app.outputs.present == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.PSW_CI_APP_ID }}
+          private-key: ${{ secrets.PSW_CI_PRIVATE_KEY }}
+
+      # Uses the "Merge a branch" REST API rather than a local `git merge` + `git push`.
+      # A merge-back branch that requires a pull request rejects a direct push from the
+      # default GITHUB_TOKEN, and one that requires signed commits rejects a merge commit
+      # built by a local git client, which carries no signature. A merge created through
+      # this endpoint is authored and signed by GitHub itself, the same way the PR merge
+      # button produces a "Verified" commit, and pushing as the CI app (a configured bypass
+      # actor) also skips a required status check that could never have run against a
+      # commit that has not existed before.
+      - name: Merge back to ${{ inputs.merge-back-branch }} (app token)
+        id: merge_back_app
+        if: steps.ci_app.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ steps.ci_token.outputs.token }}
+        run: |
+          gh api repos/${{ github.repository }}/merges \
+            -f base=${{ inputs.merge-back-branch }} \
+            -f head=${{ inputs.release-branch }} \
+            -f commit_message="chore(release): merge ${{ inputs.release-branch }} into ${{ inputs.merge-back-branch }} after ${{ steps.resolve_tag.outputs.tag }}"
+
+      # Fallback for repos with no CI app configured and no protection in the way.
       - name: Merge back to ${{ inputs.merge-back-branch }}
         id: merge_back
-        if: inputs.merge-back-branch != ''
+        if: inputs.merge-back-branch != '' && steps.ci_app.outputs.present != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.email "ci@pilgrimagesoftware.com"
           git config --global user.name "Pilgrimage Software CI"
           git checkout ${{ inputs.merge-back-branch }}
-          git merge origin/master
+          git merge origin/${{ inputs.release-branch }}
           git push origin ${{ inputs.merge-back-branch }}

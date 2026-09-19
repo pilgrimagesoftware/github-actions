@@ -116,7 +116,7 @@ jobs:
             "$BRANCH" \
             "$HEAD_OID" \
             "chore(release): ${{ steps.version.outputs.version }}" \
-            ${{ inputs.commit-files }} <<'PY'
+            ${{ inputs.commit-files }} <<'PY' > /tmp/commit-request.json
           import base64
           import json
           import sys
@@ -145,7 +145,7 @@ jobs:
               )
           )
           PY
-          gh api graphql --input -
+          gh api graphql --input /tmp/commit-request.json
 
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 

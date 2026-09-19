@@ -111,31 +111,41 @@ jobs:
           BRANCH="${{ steps.push_branch.outputs.branch }}"
           HEAD_OID="${{ steps.push_branch.outputs.head_oid }}"
 
-          ADDITIONS="[]"
-          for FILE in ${{ inputs.commit-files }}; do
-            ENTRY=$(jq -n --arg path "$FILE" --arg contents "$(base64 -w0 "$FILE")" \
-              '{path: $path, contents: $contents}')
-            ADDITIONS=$(jq -n --argjson acc "$ADDITIONS" --argjson entry "$ENTRY" '$acc + [$entry]')
-          done
+          python3 - \
+            "${{ github.repository }}" \
+            "$BRANCH" \
+            "$HEAD_OID" \
+            "chore(release): ${{ steps.version.outputs.version }}" \
+            ${{ inputs.commit-files }} <<'PY'
+          import base64
+          import json
+          import sys
 
-          INPUT=$(jq -n \
-            --arg repo "${{ github.repository }}" \
-            --arg branch "$BRANCH" \
-            --arg headOid "$HEAD_OID" \
-            --arg message "chore(release): ${{ steps.version.outputs.version }}" \
-            --argjson additions "$ADDITIONS" \
-            '{
-              branch: {repositoryNameWithOwner: $repo, branchName: $branch},
-              message: {headline: $message},
-              expectedHeadOid: $headOid,
-              fileChanges: {additions: $additions}
-            }')
+          repo, branch, head_oid, message, *paths = sys.argv[1:]
 
-          jq -n \
-            --arg query 'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }' \
-            --argjson input "$INPUT" \
-            '{query: $query, variables: {input: $input}}' \
-            | gh api graphql --input -
+          additions = []
+          for path in paths:
+              with open(path, "rb") as fh:
+                  additions.append(
+                      {"path": path, "contents": base64.b64encode(fh.read()).decode("ascii")}
+                  )
+
+          payload = {
+              "branch": {"repositoryNameWithOwner": repo, "branchName": branch},
+              "message": {"headline": message},
+              "expectedHeadOid": head_oid,
+              "fileChanges": {"additions": additions},
+          }
+          print(
+              json.dumps(
+                  {
+                      "query": "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+                      "variables": {"input": payload},
+                  }
+              )
+          )
+          PY
+          gh api graphql --input -
 
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 

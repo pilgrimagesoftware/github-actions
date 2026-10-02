@@ -25,6 +25,13 @@ on:
           as a trusted publisher there.
         type: boolean
         default: true
+      linux-packages:
+        description: >
+          Space-separated apt packages to install on the Linux runner before the pre-publish
+          `cargo test`, for crates with native build or link dependencies. Empty to skip.
+        required: false
+        type: string
+        default: ""
       merge-back-branch:
         description: "Branch to merge the release ref back into after publishing (e.g. develop). Empty to skip."
         type: string
@@ -87,6 +94,13 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: git-cliff
+
+      - name: Install Linux packages
+        id: linux_packages
+        if: inputs.linux-packages != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ inputs.linux-packages }}
 
       - name: Test
         id: test

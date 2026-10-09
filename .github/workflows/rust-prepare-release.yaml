@@ -23,6 +23,16 @@ on:
         description: "Space-separated list of files git-cliff/cargo-edit modify, committed as the release commit."
         type: string
         default: "Cargo.toml CHANGELOG.md"
+      auto-merge:
+        description: >
+          Enable auto-merge on the release PR, so it merges once the base branch's required
+          checks and reviews pass. The repo must allow auto-merge.
+        type: boolean
+        default: false
+      merge-method:
+        description: "Merge method auto-merge uses: merge, squash or rebase."
+        type: string
+        default: "merge"
     secrets:
       PSW_CI_APP_ID:
         required: true
@@ -187,3 +197,13 @@ jobs:
           gh project item-add ${{ inputs.project-number }} \
             --owner ${{ github.repository_owner }} \
             --url ${{ steps.create_pull_request.outputs.pull-request-url }}
+
+      # Enabled with the app token so the eventual merge triggers the caller's
+      # `pull_request: closed` tag workflow; a GITHUB_TOKEN merge would not.
+      - name: Enable auto-merge on release PR
+        if: inputs.auto-merge
+        env:
+          GH_TOKEN: ${{ steps.psw_ci_token.outputs.token }}
+        run: |
+          gh pr merge "${{ steps.create_pull_request.outputs.pull-request-url }}" \
+            --auto --${{ inputs.merge-method }}

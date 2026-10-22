@@ -72,7 +72,8 @@ jobs:
       - name: Install cargo-edit
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-edit
+          # 0.13.14+ needs rustc 1.97; consumers pin 1.95. Unpin once they upgrade.
+          tool: cargo-edit@0.13.13
 
       - name: Determine next version
         id: version

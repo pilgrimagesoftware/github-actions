@@ -72,8 +72,12 @@ jobs:
       - name: Install cargo-edit
         uses: taiki-e/install-action@v2
         with:
-          # 0.13.14+ needs rustc 1.97; consumers pin 1.95. Unpin once they upgrade.
-          tool: cargo-edit@0.13.13
+          # 0.13.14+ needs rustc 1.97. This workflow installs no toolchain, so
+          # the version that matters is whatever the runner image ships, not
+          # any consumer's rust-toolchain.toml. ubuntu-latest ships Cargo
+          # 1.99.0, and no consumer pins below 1.99.0, so the 0.13.13 pin added
+          # in PR #7 is no longer needed.
+          tool: cargo-edit
 
       - name: Determine next version
         id: version
